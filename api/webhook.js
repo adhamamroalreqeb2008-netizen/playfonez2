@@ -1,5 +1,5 @@
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+const REDIS_URL = (process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "").trim();
+const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || "").trim();
 
 async function setStatus(requestId, status) {
   if (!REDIS_URL || !REDIS_TOKEN) {
@@ -11,7 +11,7 @@ async function setStatus(requestId, status) {
     method: "POST",
     headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) {
     throw new Error(data.error || `Redis HTTP ${res.status}`);
   }
@@ -49,8 +49,15 @@ export default async function handler(req, res) {
     return res.status(200).send("OK");
   }
 
-  const botToken = process.env.BOT_TOKEN;
-  const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+  const botToken = (process.env.BOT_TOKEN || "").trim();
+
+  let rawBody = {};
+  try {
+    rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+  } catch (parseErr) {
+    console.error("Body parse error:", parseErr);
+    return res.status(400).json({ ok: false, error: "Invalid JSON body" });
+  }
 
   console.log("WEBHOOK HIT:", {
     hasCallback: Boolean(rawBody?.callback_query),
@@ -65,8 +72,10 @@ export default async function handler(req, res) {
 
     if (update && update.callback_query) {
       const cq = update.callback_query;
-      const rawData = String(cq.data || "");
-      const [action, requestId] = rawData.split(":");
+      const rawData = String(cq.data || "").trim();
+      const colonIdx = rawData.indexOf(":");
+      const action = colonIdx !== -1 ? rawData.slice(0, colonIdx).trim() : "";
+      const requestId = colonIdx !== -1 ? rawData.slice(colonIdx + 1).trim() : "";
 
       if (requestId && (action === "approve" || action === "reject")) {
         const nextStatus = action === "approve" ? "approved" : "rejected";
