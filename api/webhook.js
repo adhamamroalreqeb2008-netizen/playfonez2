@@ -3,7 +3,7 @@ const REDIS_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST
 
 async function setStatus(requestId, status) {
   if (!REDIS_URL || !REDIS_TOKEN) {
-    throw new Error("Missing Redis URL or Token");
+    throw new Error("Missing REDIS_URL or REDIS_TOKEN in Vercel");
   }
   const key = encodeURIComponent(`verify:${requestId}`);
   const val = encodeURIComponent(status);
@@ -50,90 +50,71 @@ export default async function handler(req, res) {
   }
 
   const botToken = (process.env.BOT_TOKEN || "").trim();
+  const update = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
 
-  let rawBody = {};
-  try {
-    rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-  } catch (parseErr) {
-    console.error("Body parse error:", parseErr);
-    return res.status(400).json({ ok: false, error: "Invalid JSON body" });
-  }
+  if (update && update.callback_query) {
+    const cq = update.callback_query;
+    const rawData = String(cq.data || "").trim();
+    const colonIdx = rawData.indexOf(":");
+    const action = colonIdx !== -1 ? rawData.slice(0, colonIdx).trim() : "";
+    const requestId = colonIdx !== -1 ? rawData.slice(colonIdx + 1).trim() : "";
 
-  console.log("WEBHOOK HIT:", {
-    hasCallback: Boolean(rawBody?.callback_query),
-    data: rawBody?.callback_query?.data || null,
-    hasBotToken: Boolean(botToken),
-    hasRedisUrl: Boolean(REDIS_URL),
-    hasRedisToken: Boolean(REDIS_TOKEN)
-  });
+    if (requestId && (action === "approve" || action === "reject")) {
+      const nextStatus = action === "approve" ? "approved" : "rejected";
 
-  try {
-    const update = rawBody;
-
-    if (update && update.callback_query) {
-      const cq = update.callback_query;
-      const rawData = String(cq.data || "").trim();
-      const colonIdx = rawData.indexOf(":");
-      const action = colonIdx !== -1 ? rawData.slice(0, colonIdx).trim() : "";
-      const requestId = colonIdx !== -1 ? rawData.slice(colonIdx + 1).trim() : "";
-
-      if (requestId && (action === "approve" || action === "reject")) {
-        const nextStatus = action === "approve" ? "approved" : "rejected";
+      try {
         await setStatus(requestId, nextStatus);
-        console.log("REDIS UPDATED:", { requestId, nextStatus });
-
+      } catch (redisErr) {
+        console.error("REDIS WRITE ERROR:", redisErr.message);
         if (botToken && cq.id) {
-          const ansRes = await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               callback_query_id: cq.id,
-              text: action === "approve" ? "تمت الموافقة" : "تم الرفض",
-              show_alert: false
+              text: `خطأ قاعدة البيانات: ${redisErr.message}`.slice(0, 190),
+              show_alert: true
             })
           });
-          const ansJson = await ansRes.json().catch(() => ({}));
-          console.log("ANSWER CALLBACK:", ansJson.ok, ansJson.description || "");
         }
+        return res.status(200).json({ ok: false, error: redisErr.message });
+      }
 
-        if (botToken && cq.message) {
-          const decisionLine =
-            action === "approve"
-              ? "✅ تمت الموافقة على الطلب"
-              : "❌ تم رفض الطلب";
-          const baseText = cq.message.text ?? cq.message.caption ?? "";
-          const isCaption = cq.message.text === undefined && cq.message.caption !== undefined;
-          const endpoint = isCaption ? "editMessageCaption" : "editMessageText";
-          const field = isCaption ? "caption" : "text";
+      if (botToken && cq.id) {
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            callback_query_id: cq.id,
+            text: action === "approve" ? "تمت الموافقة بنجاح" : "تم الرفض",
+            show_alert: false
+          })
+        });
+      }
 
-          const editPayload = {
+      if (botToken && cq.message) {
+        const decisionLine =
+          action === "approve"
+            ? "✅ تمت الموافقة على الطلب"
+            : "❌ تم رفض الطلب";
+        const baseText = cq.message.text ?? cq.message.caption ?? "";
+        const isCaption = cq.message.text === undefined && cq.message.caption !== undefined;
+        const endpoint = isCaption ? "editMessageCaption" : "editMessageText";
+        const field = isCaption ? "caption" : "text";
+
+        await fetch(`https://api.telegram.org/bot${botToken}/${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
             chat_id: cq.message.chat.id,
             message_id: cq.message.message_id,
             [field]: `${baseText}\n\n${decisionLine}`,
             reply_markup: { inline_keyboard: [] }
-          };
-
-          if (!isCaption && cq.message.entities) {
-            editPayload.entities = cq.message.entities;
-          }
-          if (isCaption && cq.message.caption_entities) {
-            editPayload.caption_entities = cq.message.caption_entities;
-          }
-
-          const editRes = await fetch(`https://api.telegram.org/bot${botToken}/${endpoint}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(editPayload)
-          });
-          const editJson = await editRes.json().catch(() => ({}));
-          console.log("EDIT MESSAGE:", editJson.ok, editJson.description || "");
-        }
+          })
+        });
       }
     }
-
-    return res.status(200).json({ ok: true });
-  } catch (err) {
-    console.error("Webhook error:", err);
-    return res.status(500).json({ ok: false, error: err.message });
   }
+
+  return res.status(200).json({ ok: true });
 }
