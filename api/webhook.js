@@ -2,19 +2,27 @@ const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 
 async function setStatus(requestId, status) {
-  if (!REDIS_URL || !REDIS_TOKEN) return;
-  try {
-    await fetch(`${REDIS_URL}/set/verify:${encodeURIComponent(requestId)}/${encodeURIComponent(status)}/ex/3600`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
-    });
-  } catch (_) {}
+  if (!REDIS_URL || !REDIS_TOKEN) {
+    throw new Error("Missing Redis URL or Token");
+  }
+  const key = encodeURIComponent(`verify:${requestId}`);
+  const val = encodeURIComponent(status);
+  const res = await fetch(`${REDIS_URL}/set/${key}/${val}/ex/3600`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `Redis HTTP ${res.status}`);
+  }
+  return data;
 }
 
 async function getStatus(requestId) {
   if (!REDIS_URL || !REDIS_TOKEN) return "pending";
   try {
-    const res = await fetch(`${REDIS_URL}/get/verify:${encodeURIComponent(requestId)}`, {
+    const key = encodeURIComponent(`verify:${requestId}`);
+    const res = await fetch(`${REDIS_URL}/get/${key}`, {
       headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
       cache: "no-store"
     });
@@ -26,6 +34,8 @@ async function getStatus(requestId) {
 }
 
 export default async function handler(req, res) {
+  res.setHeader("Cache-Control", "no-store");
+
   if (req.method === "GET") {
     const requestId = String(req.query.requestId || "").trim();
     if (!requestId) {
@@ -70,14 +80,19 @@ export default async function handler(req, res) {
             action === "approve"
               ? "✅ تمت الموافقة على الطلب"
               : "❌ تم رفض الطلب";
+          const baseText = cq.message.text ?? cq.message.caption ?? "";
+          const isCaption = cq.message.text === undefined && cq.message.caption !== undefined;
+          const endpoint = isCaption ? "editMessageCaption" : "editMessageText";
+          const field = isCaption ? "caption" : "text";
 
-          await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          await fetch(`https://api.telegram.org/bot${botToken}/${endpoint}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chat_id: cq.message.chat.id,
               message_id: cq.message.message_id,
-              text: `${cq.message.text || ""}\n\n${decisionLine}`
+              [field]: `${baseText}\n\n${decisionLine}`,
+              reply_markup: { inline_keyboard: [] }
             })
           });
         }
@@ -86,6 +101,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ ok: true });
   } catch (err) {
-    return res.status(200).json({ ok: false, error: err.message });
+    console.error("Webhook error:", err);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 }
