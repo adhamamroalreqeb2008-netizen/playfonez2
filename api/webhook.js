@@ -1,4 +1,23 @@
-const store = globalThis.__verifyStore || (globalThis.__verifyStore = new Map());
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+
+async function setStatus(requestId, status) {
+  if (!REDIS_URL || !REDIS_TOKEN) return;
+  await fetch(`${REDIS_URL}/set/verify:${encodeURIComponent(requestId)}/${encodeURIComponent(status)}/ex/3600`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
+  });
+}
+
+async function getStatus(requestId) {
+  if (!REDIS_URL || !REDIS_TOKEN) return "pending";
+  const res = await fetch(`${REDIS_URL}/get/verify:${encodeURIComponent(requestId)}`, {
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+    cache: "no-store"
+  });
+  const data = await res.json();
+  return data.result || "pending";
+}
 
 export default async function handler(req, res) {
   if (req.method === "GET") {
@@ -6,7 +25,7 @@ export default async function handler(req, res) {
     if (!requestId) {
       return res.status(400).json({ ok: false, error: "Missing requestId" });
     }
-    const status = store.get(requestId) || "pending";
+    const status = await getStatus(requestId);
     return res.status(200).json({ ok: true, requestId, status });
   }
 
@@ -25,7 +44,7 @@ export default async function handler(req, res) {
 
       if (requestId && (action === "approve" || action === "reject")) {
         const nextStatus = action === "approve" ? "approved" : "rejected";
-        store.set(requestId, nextStatus);
+        await setStatus(requestId, nextStatus);
 
         const label =
           action === "approve"
