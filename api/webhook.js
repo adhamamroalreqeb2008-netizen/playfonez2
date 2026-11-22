@@ -50,9 +50,18 @@ export default async function handler(req, res) {
   }
 
   const botToken = process.env.BOT_TOKEN;
+  const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+
+  console.log("WEBHOOK HIT:", {
+    hasCallback: Boolean(rawBody?.callback_query),
+    data: rawBody?.callback_query?.data || null,
+    hasBotToken: Boolean(botToken),
+    hasRedisUrl: Boolean(REDIS_URL),
+    hasRedisToken: Boolean(REDIS_TOKEN)
+  });
 
   try {
-    const update = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const update = rawBody;
 
     if (update && update.callback_query) {
       const cq = update.callback_query;
@@ -62,9 +71,10 @@ export default async function handler(req, res) {
       if (requestId && (action === "approve" || action === "reject")) {
         const nextStatus = action === "approve" ? "approved" : "rejected";
         await setStatus(requestId, nextStatus);
+        console.log("REDIS UPDATED:", { requestId, nextStatus });
 
         if (botToken && cq.id) {
-          await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          const ansRes = await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -73,6 +83,8 @@ export default async function handler(req, res) {
               show_alert: false
             })
           });
+          const ansJson = await ansRes.json().catch(() => ({}));
+          console.log("ANSWER CALLBACK:", ansJson.ok, ansJson.description || "");
         }
 
         if (botToken && cq.message) {
@@ -85,16 +97,27 @@ export default async function handler(req, res) {
           const endpoint = isCaption ? "editMessageCaption" : "editMessageText";
           const field = isCaption ? "caption" : "text";
 
-          await fetch(`https://api.telegram.org/bot${botToken}/${endpoint}`, {
+          const editPayload = {
+            chat_id: cq.message.chat.id,
+            message_id: cq.message.message_id,
+            [field]: `${baseText}\n\n${decisionLine}`,
+            reply_markup: { inline_keyboard: [] }
+          };
+
+          if (!isCaption && cq.message.entities) {
+            editPayload.entities = cq.message.entities;
+          }
+          if (isCaption && cq.message.caption_entities) {
+            editPayload.caption_entities = cq.message.caption_entities;
+          }
+
+          const editRes = await fetch(`https://api.telegram.org/bot${botToken}/${endpoint}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: cq.message.chat.id,
-              message_id: cq.message.message_id,
-              [field]: `${baseText}\n\n${decisionLine}`,
-              reply_markup: { inline_keyboard: [] }
-            })
+            body: JSON.stringify(editPayload)
           });
+          const editJson = await editRes.json().catch(() => ({}));
+          console.log("EDIT MESSAGE:", editJson.ok, editJson.description || "");
         }
       }
     }
