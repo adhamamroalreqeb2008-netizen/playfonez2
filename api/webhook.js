@@ -3,20 +3,26 @@ const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_
 
 async function setStatus(requestId, status) {
   if (!REDIS_URL || !REDIS_TOKEN) return;
-  await fetch(`${REDIS_URL}/set/verify:${encodeURIComponent(requestId)}/${encodeURIComponent(status)}/ex/3600`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
-  });
+  try {
+    await fetch(`${REDIS_URL}/set/verify:${encodeURIComponent(requestId)}/${encodeURIComponent(status)}/ex/3600`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
+    });
+  } catch (_) {}
 }
 
 async function getStatus(requestId) {
   if (!REDIS_URL || !REDIS_TOKEN) return "pending";
-  const res = await fetch(`${REDIS_URL}/get/verify:${encodeURIComponent(requestId)}`, {
-    headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
-    cache: "no-store"
-  });
-  const data = await res.json();
-  return data.result || "pending";
+  try {
+    const res = await fetch(`${REDIS_URL}/get/verify:${encodeURIComponent(requestId)}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+      cache: "no-store"
+    });
+    const data = await res.json();
+    return data.result || "pending";
+  } catch (_) {
+    return "pending";
+  }
 }
 
 export default async function handler(req, res) {
@@ -40,29 +46,14 @@ export default async function handler(req, res) {
 
     if (update && update.callback_query) {
       const cq = update.callback_query;
-      const [action, requestId] = String(cq.data || "").split(":");
+      const rawData = String(cq.data || "");
+      const [action, requestId] = rawData.split(":");
 
       if (requestId && (action === "approve" || action === "reject")) {
         const nextStatus = action === "approve" ? "approved" : "rejected";
         await setStatus(requestId, nextStatus);
 
-        const label =
-          action === "approve"
-            ? "✅ *تمت الموافقة على الطلب*"
-            : "❌ *تم رفض الطلب*";
-
-        if (botToken && cq.message) {
-          await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: cq.message.chat.id,
-              message_id: cq.message.message_id,
-              text: `${cq.message.text}\n\n${label}`,
-              parse_mode: "Markdown"
-            })
-          });
-
+        if (botToken && cq.id) {
           await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -70,6 +61,23 @@ export default async function handler(req, res) {
               callback_query_id: cq.id,
               text: action === "approve" ? "تمت الموافقة" : "تم الرفض",
               show_alert: false
+            })
+          });
+        }
+
+        if (botToken && cq.message) {
+          const decisionLine =
+            action === "approve"
+              ? "✅ تمت الموافقة على الطلب"
+              : "❌ تم رفض الطلب";
+
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: cq.message.chat.id,
+              message_id: cq.message.message_id,
+              text: `${cq.message.text || ""}\n\n${decisionLine}`
             })
           });
         }
